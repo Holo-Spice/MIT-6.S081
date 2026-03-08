@@ -177,7 +177,7 @@ freeproc(struct proc *p)
 	p->kstack = 0;
 	// 释放进程独享页表
 	kvm_free_kernelpgtbl(p->kernelpgtble);
-	p->kernerlpgtble = 0;
+	p-> kernelpgtble = 0;
 
 	p->state = UNUSED;
 }

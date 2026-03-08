@@ -16,7 +16,7 @@ extern char etext[]; // kernel.ld sets this to end of kernel code.
 extern char trampoline[]; // trampoline.S
 
 // 映射页表
-pagetable_t kvm_map_pagetable(pagetable_t pgtbl)
+void kvm_map_pagetable(pagetable_t pgtbl)
 {
 	// uart registers
 	kvmmap(pgtbl, UART0, UART0, PGSIZE, PTE_R | PTE_W);
@@ -38,7 +38,7 @@ pagetable_t kvm_map_pagetable(pagetable_t pgtbl)
 
 	// map the trampoline for trap entry/exit to
 	// the highest virtual address in the kernel.
-	kvmmap(pgtbl, (uint64)trampoline, (uint64)trampoline, PGSIZE, PTE_R | PTE_X);
+	kvmmap(pgtbl, TRAMPOLINE, (uint64)trampoline, PGSIZE, PTE_R | PTE_X);
 }
 
 // 创建一个页表并初始化映射
