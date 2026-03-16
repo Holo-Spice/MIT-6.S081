@@ -139,6 +139,8 @@ int argaddr(int, uint64 *);
 int fetchstr(uint64, char *, int);
 int fetchaddr(uint64, uint64 *);
 void syscall();
+int sigalarm(int ticks, void (*handler)());
+int sigreturn(void);
 
 // trap.c
 extern uint ticks;
