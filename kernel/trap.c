@@ -71,18 +71,13 @@ void usertrap(void)
 	else if (r_scause() == 15 || r_scause() == 13)
 	{								 // 惰性分配导致的页错误或访问权限错误
 		uint64 fault_va = r_stval(); // 获取导致页错误的虚拟地址
-		char *pa = 0;				 // 分配的物理页地址
-		// 判断fault_va是否在合法范围内（如用户地址空间范围）
-		if (PGROUNDUP(p->trapframe->sp) - 1 < fault_va && fault_va < p->sz && (pa = kalloc()) != 0)
-		{
-			memset(pa, 0, PGSIZE); // 将新分配的物理页清零
-			// 内核页表建立虚拟地址fault_va到物理地址pa的映射，权限为可读写用户访问
-			if (mappages(p->pagetable, PGROUNDDOWN(fault_va), PGSIZE, (uint64)pa, PTE_R | PTE_W | PTE_U | PTE_X) != 0)
-			{
-				printf("lazy alloc: failed to map page\n");
-				kfree(pa);
-				p->killed = 1;
-			}
+		// 缺页异常， 且进行过惰性分配
+		if((r_scause() == 13 || r_scause() == 15) && uvmshouldalloc(fault_va)){
+			uvmlazyalloc(fault_va); // 分配物理页并建立映射
+		}else{ //抛出异常且杀死进程
+			printf("usertrap(): unexpected scause %p pid=%d\n", r_scause(), p->pid);
+			printf("            sepc=%p stval=%p\n", r_sepc(), r_stval());
+			p->killed = 1;
 		}
 	}
 	else

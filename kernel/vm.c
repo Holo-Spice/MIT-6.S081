@@ -5,6 +5,9 @@
 #include "riscv.h"
 #include "defs.h"
 #include "fs.h"
+#include "spinlock.h"
+#include "proc.h"
+
 
 /*
  * the kernel's page table.
@@ -89,7 +92,39 @@ walk(pagetable_t pagetable, uint64 va, int alloc)
 	}
 	return &pagetable[PX(0, va)];
 }
+// 判断页面是否为惰性分配地址，是返回1
+int uvmshouldalloc(uint64 va)
+{
+	pte_t *pte;
+	struct proc *p = myproc();
 
+	return va < p->sz															   // 确保va在用户地址空间范围内
+		   && PGROUNDDOWN(va) != r_sp()											   // 确保va不在guard page 中
+		   && (((pte = walk(p->pagetable, va, 0)) == 0) || ((*pte & PTE_V) == 0)); // 确保va未映射
+}
+
+// 给惰性分配地址分配物理页，并建立映射
+void uvmlazyalloc(uint64 va)
+{
+	struct proc *p = myproc();
+	char *pa = kalloc();
+	if (pa == 0)
+	{
+		printf("lazy alloc: out of memory\n");
+		p->killed = 1;
+	}
+	else
+	{
+		memset(pa, 0, PGSIZE);
+		// 映射物理地址
+		if (mappages(p->pagetable, PGROUNDDOWN(va), PGSIZE, (uint64)pa, PTE_W | PTE_X | PTE_R | PTE_U) != 0)
+		{
+			printf("lazy alloc: failed to map page\\n");
+			kfree(pa);
+			p->killed = 1;
+		}
+	}
+}
 // Look up a virtual address, return the physical address,
 // or 0 if not mapped.
 // Can only be used to look up user pages.
@@ -182,7 +217,7 @@ void uvmunmap(pagetable_t pagetable, uint64 va, uint64 npages, int do_free)
 	for (a = va; a < va + npages * PGSIZE; a += PGSIZE)
 	{
 		if ((pte = walk(pagetable, a, 0)) == 0)
-			//panic("uvmunmap: walk"); 惰性分配场景下可能存在未映射的页表项
+			// panic("uvmunmap: walk"); 惰性分配场景下可能存在未映射的页表项
 			continue;
 		if ((*pte & PTE_V) == 0)
 			// panic("uvmunmap: not mapped"); 惰性分配场景下可能存在未映射的页表项
@@ -324,9 +359,11 @@ int uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
 	for (i = 0; i < sz; i += PGSIZE)
 	{
 		if ((pte = walk(old, i, 0)) == 0)
-			panic("uvmcopy: pte should exist");
+			// panic("uvmcopy: pte should exist"); 惰性分配场景下可能存在未映射的页表项
+			continue;
 		if ((*pte & PTE_V) == 0)
-			panic("uvmcopy: page not present");
+			// panic("uvmcopy: page not present"); 惰性分配场景下可能存在未映射的页表项
+			continue;
 		pa = PTE2PA(*pte);
 		flags = PTE_FLAGS(*pte);
 		if ((mem = kalloc()) == 0)
@@ -344,6 +381,7 @@ err:
 	uvmunmap(new, 0, i / PGSIZE, 1);
 	return -1;
 }
+
 
 // mark a PTE invalid for user access.
 // used by exec for the user stack guard page.
@@ -363,6 +401,12 @@ void uvmclear(pagetable_t pagetable, uint64 va)
 int copyout(pagetable_t pagetable, uint64 dstva, char *src, uint64 len)
 {
 	uint64 n, va0, pa0;
+
+	// 惰性分配场景下，如果dstva对应的页表项不存在或无效，则为其分配物理页并建立映射
+	if (uvmshouldalloc(dstva))
+	{
+		uvmlazyalloc(dstva);
+	}
 
 	while (len > 0)
 	{
@@ -388,6 +432,12 @@ int copyout(pagetable_t pagetable, uint64 dstva, char *src, uint64 len)
 int copyin(pagetable_t pagetable, char *dst, uint64 srcva, uint64 len)
 {
 	uint64 n, va0, pa0;
+
+	// 惰性分配场景下，如果srcva对应的页表项不存在或无效，则为其分配物理页并建立映射
+	if (uvmshouldalloc(srcva))
+	{
+		uvmlazyalloc(srcva);
+	}
 
 	while (len > 0)
 	{
@@ -456,3 +506,4 @@ int copyinstr(pagetable_t pagetable, char *dst, uint64 srcva, uint64 max)
 		return -1;
 	}
 }
+
